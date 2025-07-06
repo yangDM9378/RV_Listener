@@ -4,39 +4,46 @@ import com.tibco.tibrv.*;
 public class TibcoRVListener implements TibrvMsgCallback {
     private TibrvTransport transport;
     private Set<String> tagKeys;
-    private Set<String> fieldKeys;
-    private String timeKey;
+        private Set<String> fieldKeys;
+        private String timeKey;
+        private String influxV3Database;
 
-    public TibcoRVListener(Set<String> tagKeys, Set<String> fieldKeys, String timeKey) {
-        this.tagKeys = tagKeys;
-        this.fieldKeys = fieldKeys;
-        this.timeKey = timeKey;
+    public TibcoRVListener(Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database) {
+            this.tagKeys = tagKeys;
+            this.fieldKeys = fieldKeys;
+            this.timeKey = timeKey;
+            this.influxV3Database = influxV3Database;
     }
 
-    public void start(String network, String daemon, int servicePort, String[] subjects) throws TibrvException {
+    public void start(String network, String daemon, int servicePort, String subject) throws TibrvException {
         Tibrv.open(Tibrv.IMPL_NATIVE);
         transport = new TibrvRvdTransport(String.valueOf(servicePort), network, daemon);
-
-        for (String subject : subjects) {
-            new TibrvListener(Tibrv.defaultQueue(), this, transport, subject, null);
-            System.out.println("Listening on subject: " + subject);
-        }
-
+        new TibrvListener(Tibrv.defaultQueue(), this, transport, subject, null);
+        System.out.println("Listening on subject: " + subject);
+        // subject 여러개 가정
+//        for (String subject : subjects) {
+//            new TibrvListener(Tibrv.defaultQueue(), this, transport, subject, null);
+//            System.out.println("Listening on subject: " + subject);
+//        }
         new TibrvDispatcher(Tibrv.defaultQueue());
     }
 
     @Override
     public void onMsg(TibrvListener listener, TibrvMsg message) {
         try {
-            TibrvMsgField field = message.getField("xmlData");
-            if (field != null) {
-                String xmlData = (String) field.data;
-                System.out.println("[TibcoRVListener] 수신한 xmlData: " + xmlData);
+//            String fullMessage = message.toString();
+//            LogUtils.writeLogToSubFolder("tibcoRV_message", "tibco_message", fullMessage);
 
-                XmlParsingV3.parseXmlData(xmlData, tagKeys, fieldKeys, timeKey);
+            TibrvMsgField field = message.getField("xmlData");
+            if (field != null && field.data instanceof String) {
+                String xmlData = (String) field.data;
+
+                System.out.println("[TibcoRVListener] sending xmlData: " + xmlData);
+//                LogUtils.writeLogToSubFolder("xml_parsing", "xmlData", xmlData);
+                XmlParsingV3.parseXmlData(xmlData, tagKeys, fieldKeys, timeKey, influxV3Database);
 
             } else {
-                System.out.println("[TibcoRVListener] xmlData 필드가 없습니다. 전체 메시지: " + message.toString());
+                System.out.println("[TibcoRVListener] no xmlData field all data: " + message.toString());
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -3,33 +3,41 @@ import javax.xml.parsers.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class XmlParsingV3 {
-    public static void parseXmlData(String xmlData, Set<String> tagKeys, Set<String> fieldKeys, String timeKey) {
+    public static void parseXmlData(String xmlData, Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database) {
         try {
+            // string으로 가져온 xmlData를 트리형태 DOM 구조로 변경
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(new ByteArrayInputStream(xmlData.getBytes("UTF-8")));
 
-            // messagename 검증
+            // messagename 추출하여 사용 검증
             NodeList messageNameList = doc.getElementsByTagName("messagename");
             if (messageNameList.getLength() == 0) {
                 System.out.println("Error: no messagename tag, skip xml");
                 return;
             }
+            // messagname이 TraceData가 아닌 경우 제외 (대소문자 상관 없이)
             String messageName = messageNameList.item(0).getTextContent();
-            if (!"TraceData".equals(messageName)) {
+            if (!"TraceData".equalsIgnoreCase(messageName)) {
                 System.out.println("Skip: messagename=" + messageName);
                 return;
             }
-
             // MACHINENAME 추출 (DB 이름)
+            String dbName = influxV3Database;
             NodeList dbNameList = doc.getElementsByTagName("MACHINENAME");
-            if (dbNameList == null || dbNameList.getLength() == 0) {
-                System.out.println("Skip: no MACHINENAME info");
-                return;
+            if (dbNameList != null || dbNameList.getLength() > 0) {
+                String extracted = dbNameList.item(0).getTextContent();
+                if (extracted != null && !extracted.trim().isEmpty()) {
+                    dbName = extracted;
+                } else {
+                    System.out.println("Warning: MACHINENAME value is empty, using fallback dbName = " + influxV3Database);
+                }
+            } else {
+                System.out.println("Warning: no MACHINENAME tag found, using fallback dbName = " + influxV3Database);
             }
-            String dbName = dbNameList.item(0).getTextContent();
 
             Map<String, Object> tags = new HashMap<>();
             Map<String, Object> fields = new HashMap<>();
@@ -39,8 +47,18 @@ public class XmlParsingV3 {
             NodeList items = doc.getElementsByTagName("ITEM");
             for (int i = 0; i < items.getLength(); i++) {
                 Element item = (Element) items.item(i);
-                String itemName = item.getElementsByTagName("ITEMNAME").item(0).getTextContent();
+                // ITEM안의 ITEMNAME
+                NodeList itemNameList = item.getElementsByTagName("ITEMNAME");
+                if (itemNameList.getLength() == 0) continue;
+                // ITEM안의 ITEMNAME이 여러개인 경우 확인용 -> 첫번째만 저장되도록 구현됨 -> 제공된 log 형식 기준
+                if (itemNameList.getLength() > 1) {
+                    String firstItemName = itemNameList.item(0).getTextContent();
+                    String logMessage = "Warning: Multiple ITEMNAME elements found in ITEM. Using the first one only: " + firstItemName;
+                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                }
+                String itemName = itemNameList.item(0).getTextContent();
 
+                // ITEMNAME이 SY_CLOCK과 같은 값을 time 값으로 설정하기
                 if (timeKey.equals(itemName)) {
                     NodeList siteValueList = item.getElementsByTagName("SITEVALUE");
                     if (siteValueList.getLength() == 1) {
@@ -54,18 +72,42 @@ public class XmlParsingV3 {
 
                 if (!isTagKey && !isFieldKey) continue;
                 if (isTagKey && isFieldKey) {
-                    System.out.println("Skip: Config file의 Tag/Field 중복존재 " + itemName);
+                    String logMessage = "Skip: Config file contains duplicate key in both tag and field: " + itemName;
+                    System.out.println(logMessage);
+                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
                     continue;
                 }
 
                 NodeList siteValueList = item.getElementsByTagName("SITEVALUE");
-                if (siteValueList.getLength() != 1) {
-                    System.out.println("Warning: SITEVALUE 없음. itemName=" + itemName);
+                // SITEVALUE 태그 자체가 없는 경우
+                if (siteValueList.getLength() == 0) {
+                    String logMessage = "Warning: SITEVALUE tag not found. itemName=" + itemName;
+                    System.out.println(logMessage);
+                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    if (isTagKey) {
+                        tags.put(itemName, "-");
+                    } else if (isFieldKey) {
+                        fields.put(itemName, "-");
+                    }
                     continue;
                 }
 
                 String siteValue = siteValueList.item(0).getTextContent();
+                // SITEVALUE 태그는 있으나 값이 비어 있는 경우
+                if (siteValue == null || siteValue.trim().isEmpty()) {
+                    String logMessage = "Warning: SITEVALUE is empty. itemName=" + itemName;
+                    System.out.println(logMessage);
+                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    if (isTagKey) {
+                        tags.put(itemName, "-");
+                    } else if (isFieldKey) {
+                        fields.put(itemName, "-");
+                    }
+                    continue;
+                }
 
+                // SY_HOSTCMDCPNAME / SY_HOSTCMDCPVALUE 에 대한 처리 일단 주석 처리
+                /*
                 if (isTagKey) {
                     if (itemName.startsWith("SY_HOSTCMDCPNAME")) {
                         if (siteValue != null && !siteValue.isEmpty()) {
@@ -81,20 +123,45 @@ public class XmlParsingV3 {
                     tags.put(itemName, siteValue);
                     pendingHostCmdName = null;
                 }
+                */
 
+                // tag키와 Field키 정리 -> tag키의 경우 무조껀 string으로 field키의 경우 value값에 따라 처리
+                if (isTagKey) {
+                    tags.put(itemName, siteValue);
+                }
                 if (isFieldKey) {
                     fields.put(itemName, parseValue(siteValue));
                 }
             }
 
+            // influxTimeKey 방어 코드 + 시간 계산 코드
             if (influxTimeString == null || influxTimeString.isEmpty()) {
                 System.out.println("Warning: " + timeKey + " no data. Skip InfluxDB store.");
                 return;
             }
+            long timestamp = parseInfluxTime(influxTimeString);
 
-            long timestamp = parseInfluxTime(influxTimeString); // ← 시간 계산 포함됨
+            Map<String, Object> jsonMap = new HashMap<>();
+            jsonMap.put("dbName", dbName);
+            jsonMap.put("measurement", "Process");
+            jsonMap.put("timestamp", timestamp);
+            jsonMap.put("tags", tags);
+            jsonMap.put("fields", fields);
 
-            // JSON 파일 저장
+            ObjectMapper mapper = new ObjectMapper();
+            String jsonString = mapper.writeValueAsString(jsonMap);
+
+            // Python 프로세스 실행
+            ProcessBuilder pb = new ProcessBuilder(
+                    "./python_influx_v3/python/python",
+                    "./python_influx_v3/influx_writer.py",
+                    Main.influxV3Url,
+                    Main.influxV3Token,
+                    Main.influxV3Org
+            );
+
+
+            /* // JSON 파일 저장
             File jsonFile = new File("data.json");
             try (FileWriter writer = new FileWriter(jsonFile)) {
                 writer.write("{\n");
@@ -105,7 +172,6 @@ public class XmlParsingV3 {
                 writer.write("\"fields\": " + toJson(fields) + "\n");
                 writer.write("}");
             }
-
             // Python 스크립트 실행 (InfluxDB v3 적재)
             ProcessBuilder pb = new ProcessBuilder(
                     "./python_influx_v3/python/python",
@@ -115,8 +181,14 @@ public class XmlParsingV3 {
                     Main.influxV3Token,
                     Main.influxV3Org
             );
+            */
+
             pb.inheritIO();
             Process p = pb.start();
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()))) {
+                writer.write(jsonString);
+                writer.flush();
+            }
             p.waitFor();
         } catch (Exception e) {
             e.printStackTrace();

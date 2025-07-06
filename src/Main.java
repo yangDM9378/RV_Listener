@@ -9,7 +9,7 @@ public class Main {
     public static String influxV3Url;
     public static String influxV3Token;
     public static String influxV3Org;
-    public static String[] influxV3Databases;
+    public static String influxV3Database;
 
     // DB Key 정보
     public static Set<String> tagKeys;
@@ -20,7 +20,7 @@ public class Main {
     public static int tibcoRVPort;
     public static String tibcoRVNetwork;
     public static String tibcoRVDaemon;
-    public static String[] tibcoRVSubjects;
+    public static String tibcoRVSubject;
 
     public static void main(String[] args) {
         // Config 정보 가져오기
@@ -31,7 +31,7 @@ public class Main {
         influxV3Url       = config.getProperty("influxdb.v3.url");
         influxV3Token     = config.getProperty("influxdb.v3.token");
         influxV3Org       = config.getProperty("influxdb.v3.org");
-        influxV3Databases = config.getProperty("influxdb.v3.databases").split(",");
+        influxV3Database = config.getProperty("influxdb.v3.database");
 
         // DB 키 정보
         tagKeys  = new HashSet<>(Arrays.asList(config.getProperty("tag.keys").split(",")));
@@ -42,13 +42,13 @@ public class Main {
         tibcoRVPort     = config.getIntProperty("tibco.rv.port", 7500);
         tibcoRVNetwork  = config.getProperty("tibco.rv.network");
         tibcoRVDaemon   = config.getProperty("tibco.rv.daemon");
-        tibcoRVSubjects = config.getProperty("tibco.rv.subjects").split(",");
+        tibcoRVSubject = config.getProperty("tibco.rv.subject");
 
 
         // Tibco RV 연동
         try {
-            TibcoRVListener rvListener = new TibcoRVListener(tagKeys, fieldKeys, timeKey);
-            rvListener.start(tibcoRVNetwork, tibcoRVDaemon, tibcoRVPort, tibcoRVSubjects);
+            TibcoRVListener rvListener = new TibcoRVListener(tagKeys, fieldKeys, timeKey, influxV3Database);
+            rvListener.start(tibcoRVNetwork, tibcoRVDaemon, tibcoRVPort, tibcoRVSubject);
         } catch (Exception e) {
             e.printStackTrace();
             System.exit(1);
