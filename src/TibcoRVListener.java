@@ -7,12 +7,14 @@ public class TibcoRVListener implements TibrvMsgCallback {
         private Set<String> fieldKeys;
         private String timeKey;
         private String influxV3Database;
+        private String influxV3measurement;
 
-    public TibcoRVListener(Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database) {
+    public TibcoRVListener(Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database, String influxV3measurement) {
             this.tagKeys = tagKeys;
             this.fieldKeys = fieldKeys;
             this.timeKey = timeKey;
             this.influxV3Database = influxV3Database;
+            this.influxV3measurement = influxV3measurement;
     }
 
     public void start(String network, String daemon, int servicePort, String subject) throws TibrvException {
@@ -40,7 +42,7 @@ public class TibcoRVListener implements TibrvMsgCallback {
 
                 System.out.println("[TibcoRVListener] sending xmlData: " + xmlData);
 //                LogUtils.writeLogToSubFolder("xml_parsing", "xmlData", xmlData);
-                XmlParsingV3.parseXmlData(xmlData, tagKeys, fieldKeys, timeKey, influxV3Database);
+                XmlParsingV3.parseXmlData(xmlData, tagKeys, fieldKeys, timeKey, influxV3Database, influxV3measurement);
 
             } else {
                 System.out.println("[TibcoRVListener] no xmlData field all data: " + message.toString());

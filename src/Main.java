@@ -10,6 +10,7 @@ public class Main {
     public static String influxV3Token;
     public static String influxV3Org;
     public static String influxV3Database;
+    public static String influxV3measurement;
 
     // DB Key 정보
     public static Set<String> tagKeys;
@@ -32,6 +33,7 @@ public class Main {
         influxV3Token     = config.getProperty("influxdb.v3.token");
         influxV3Org       = config.getProperty("influxdb.v3.org");
         influxV3Database = config.getProperty("influxdb.v3.database");
+        influxV3measurement = config.getProperty("influxdb.v3.measurement");
 
         // DB 키 정보
         tagKeys  = new HashSet<>(Arrays.asList(config.getProperty("tag.keys").split(",")));
@@ -44,10 +46,20 @@ public class Main {
         tibcoRVDaemon   = config.getProperty("tibco.rv.daemon");
         tibcoRVSubject = config.getProperty("tibco.rv.subject");
 
+        // Test용 Socket
+//        try {
+//            SocketListenerV3 socketListener = new SocketListenerV3(
+//                    tibcoRVPort, tagKeys, fieldKeys, timeKey, influxV3Database, influxV3measurement
+//            );
+//            socketListener.start();
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//            System.exit(1);
+//        }
 
         // Tibco RV 연동
         try {
-            TibcoRVListener rvListener = new TibcoRVListener(tagKeys, fieldKeys, timeKey, influxV3Database);
+            TibcoRVListener rvListener = new TibcoRVListener(tagKeys, fieldKeys, timeKey, influxV3Database, influxV3measurement);
             rvListener.start(tibcoRVNetwork, tibcoRVDaemon, tibcoRVPort, tibcoRVSubject);
         } catch (Exception e) {
             e.printStackTrace();

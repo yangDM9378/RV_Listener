@@ -9,11 +9,11 @@ public class LogUtils {
         try {
             File logDir = new File("./Log/" + subFolderName);
             if (!logDir.exists()) {
-                logDir.mkdir();
+                logDir.mkdirs();  // ✔️ 하위 폴더까지 모두 생성
             }
 
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS").format(new Date());
-            String filename = "./Log/" + subFolderName + "/" + filePrefix + ".txt" + timeStamp + ".log";
+            String filename = "./Log/" + subFolderName + "/" + filePrefix + "_" + timeStamp + ".log";
 
             try (FileWriter writer = new FileWriter(filename)) {
                 writer.write(content);

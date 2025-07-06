@@ -6,7 +6,7 @@ import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class XmlParsingV3 {
-    public static void parseXmlData(String xmlData, Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database) {
+    public static void parseXmlData(String xmlData, Set<String> tagKeys, Set<String> fieldKeys, String timeKey, String influxV3Database, String influxV3measurement) {
         try {
             // string으로 가져온 xmlData를 트리형태 DOM 구조로 변경
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -28,7 +28,7 @@ public class XmlParsingV3 {
             // MACHINENAME 추출 (DB 이름)
             String dbName = influxV3Database;
             NodeList dbNameList = doc.getElementsByTagName("MACHINENAME");
-            if (dbNameList != null || dbNameList.getLength() > 0) {
+            if (dbNameList != null && dbNameList.getLength() > 0) {
                 String extracted = dbNameList.item(0).getTextContent();
                 if (extracted != null && !extracted.trim().isEmpty()) {
                     dbName = extracted;
@@ -38,7 +38,6 @@ public class XmlParsingV3 {
             } else {
                 System.out.println("Warning: no MACHINENAME tag found, using fallback dbName = " + influxV3Database);
             }
-
             Map<String, Object> tags = new HashMap<>();
             Map<String, Object> fields = new HashMap<>();
             String influxTimeString = null;
@@ -54,7 +53,7 @@ public class XmlParsingV3 {
                 if (itemNameList.getLength() > 1) {
                     String firstItemName = itemNameList.item(0).getTextContent();
                     String logMessage = "Warning: Multiple ITEMNAME elements found in ITEM. Using the first one only: " + firstItemName;
-                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    // LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
                 }
                 String itemName = itemNameList.item(0).getTextContent();
 
@@ -74,7 +73,7 @@ public class XmlParsingV3 {
                 if (isTagKey && isFieldKey) {
                     String logMessage = "Skip: Config file contains duplicate key in both tag and field: " + itemName;
                     System.out.println(logMessage);
-                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    // LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
                     continue;
                 }
 
@@ -83,7 +82,7 @@ public class XmlParsingV3 {
                 if (siteValueList.getLength() == 0) {
                     String logMessage = "Warning: SITEVALUE tag not found. itemName=" + itemName;
                     System.out.println(logMessage);
-                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    // LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
                     if (isTagKey) {
                         tags.put(itemName, "-");
                     } else if (isFieldKey) {
@@ -97,7 +96,7 @@ public class XmlParsingV3 {
                 if (siteValue == null || siteValue.trim().isEmpty()) {
                     String logMessage = "Warning: SITEVALUE is empty. itemName=" + itemName;
                     System.out.println(logMessage);
-                    LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
+                    // LogUtils.writeLogToSubFolder("xml_parsing", "parsing_warning", logMessage);
                     if (isTagKey) {
                         tags.put(itemName, "-");
                     } else if (isFieldKey) {
@@ -133,18 +132,24 @@ public class XmlParsingV3 {
                     fields.put(itemName, parseValue(siteValue));
                 }
             }
-
+            System.out.println("here run");
             // influxTimeKey 방어 코드 + 시간 계산 코드
             if (influxTimeString == null || influxTimeString.isEmpty()) {
                 System.out.println("Warning: " + timeKey + " no data. Skip InfluxDB store.");
                 return;
             }
             long timestamp = parseInfluxTime(influxTimeString);
+            System.out.println("timestamp=" + timestamp);
+            // 혹시 모를 timestamp 값 현재 시간 세팅
+            /*
+            Long now  = System.currentTimeMillis();
+            timestamp = now;
+             */
 
             Map<String, Object> jsonMap = new HashMap<>();
             jsonMap.put("dbName", dbName);
-            jsonMap.put("measurement", "Process");
-            jsonMap.put("timestamp", timestamp);
+            jsonMap.put("measurement", influxV3measurement);
+            jsonMap.put("timestamp", (Object) timestamp);
             jsonMap.put("tags", tags);
             jsonMap.put("fields", fields);
 
@@ -153,7 +158,7 @@ public class XmlParsingV3 {
 
             // Python 프로세스 실행
             ProcessBuilder pb = new ProcessBuilder(
-                    "./python_influx_v3/python/python",
+                    "./python_influx_v3/python/python.exe",
                     "./python_influx_v3/influx_writer.py",
                     Main.influxV3Url,
                     Main.influxV3Token,
@@ -166,7 +171,7 @@ public class XmlParsingV3 {
             try (FileWriter writer = new FileWriter(jsonFile)) {
                 writer.write("{\n");
                 writer.write("\"dbName\": \"" + dbName + "\",\n");
-                writer.write("\"measurement\": \"Process\",\n");
+                writer.write("\"measurement\": \"" + influxV3measurement + "\",\n");
                 writer.write("\"timestamp\": " + timestamp + ",\n");
                 writer.write("\"tags\": " + toJson(tags) + ",\n");
                 writer.write("\"fields\": " + toJson(fields) + "\n");
@@ -183,13 +188,25 @@ public class XmlParsingV3 {
             );
             */
 
-            pb.inheritIO();
+            // pb.inheritIO();
             Process p = pb.start();
-            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(p.getOutputStream()))) {
+
+            // JSON 문자열을 Python으로 전송
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(p.getOutputStream(), "UTF-8"))) {
                 writer.write(jsonString);
                 writer.flush();
+                writer.close();
             }
-            p.waitFor();
+
+            // Python stdout 읽기
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[Python stdout] " + line);
+                }
+            }
+
+            p.waitFor(); // Python 실행 종료 대기
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -198,8 +215,8 @@ public class XmlParsingV3 {
     private static Object parseValue(String value) {
         if (value == null || value.trim().isEmpty()) return null;
         try {
-            if (value.contains(".")) return Double.parseDouble(value);
-            return Integer.parseInt(value);
+            if (value.contains(".")) return (Object) Double.parseDouble(value);
+            return (Object) Integer.parseInt(value);
         } catch (NumberFormatException e) {
             return value;
         }
